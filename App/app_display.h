@@ -4,17 +4,24 @@
 #include "plant_types.h"
 #include "app_menu.h"
 
-/* APP_Display_Init（显示模块初始化）
- * 作用：初始化显示层变量
+/* DisplayCache_t（显示缓存结构体）
+ * 作用：保存当前页面准备显示的数据，
+ * 便于后续移植到 OLED 时直接显示。
  */
-void APP_Display_Init(void);
+typedef struct
+{
+    char line1[32];
+    char line2[32];
+    char line3[32];
+    char line4[32];
+} DisplayCache_t;
 
-/* APP_Display_Show（显示界面刷新）
- * 作用：根据当前页面组织需要显示的数据
- */
+void APP_Display_Init(void);
 void APP_Display_Show(PageId_t page,
                       const SensorData_t *data,
                       const SystemParam_t *param,
                       const SystemState_t *state);
+
+const DisplayCache_t *APP_Display_GetCache(void);
 
 #endif

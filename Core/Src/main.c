@@ -26,7 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-/* USER CODE BEGIN Includes */
+
 #include "plant_types.h"
 #include "plant_config.h"
 #include "app_sensor.h"
@@ -34,7 +34,8 @@
 #include "app_display.h"
 #include "app_menu.h"
 #include "app_cloud.h"
-/* USER CODE END Includes */
+#include "bsp_debug.h"
+#include "app_display.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -130,6 +131,7 @@ int main(void)
   MX_TIM2_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+	BSP_Debug_Init();
 	/* 初始化系统默认参数 */
 	APP_DefaultParam_Init(&g_param);
 
@@ -183,6 +185,17 @@ int main(void)
         g_cloud_tick = now_tick;
 
         APP_Cloud_Upload(&g_sensor, &g_state);
+				BSP_Debug_Printf("T_x10=%ld,H_x10=%ld,L_x10=%ld,S_x10=%ld,PH_x100=%ld,P=%d,LED=%d,BEEP=%d\r\n",
+                 (long)(g_sensor.air_temp * 10.0f),
+                 (long)(g_sensor.air_humi * 10.0f),
+                 (long)(g_sensor.light_lux * 10.0f),
+                 (long)(g_sensor.soil_moisture * 10.0f),
+                 (long)(g_sensor.ph_value * 100.0f),
+                 g_state.pump_on,
+                 g_state.light_on,
+                 g_state.beep_on);
+
+				BSP_Debug_Printf("CloudPacket: %s\r\n", APP_Cloud_GetLastPacket());
     }
 
     /* 任务4：云端报文解析
