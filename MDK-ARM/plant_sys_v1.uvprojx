@@ -588,6 +588,16 @@
               <FileType>5</FileType>
               <FilePath>..\App\app_sensor.h</FilePath>
             </File>
+            <File>
+              <FileName>app_ph.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\app_ph.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_ph.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\App\app_ph.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -662,6 +672,21 @@
               <FileName>bsp_debug.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Bsp\bsp_debug.h</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_board.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Bsp\bsp_board.h</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_output.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Bsp\bsp_output.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_output.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Bsp\bsp_output.h</FilePath>
             </File>
           </Files>
         </Group>

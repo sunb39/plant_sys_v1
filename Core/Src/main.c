@@ -36,6 +36,9 @@
 #include "app_cloud.h"
 #include "bsp_debug.h"
 #include "app_display.h"
+#include "bsp_oled.h"
+#include "bsp_output.h"
+#include "app_ph.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -149,7 +152,14 @@ int main(void)
 
 	/* 初始化云端通信层 */
 	APP_Cloud_Init(&g_state);
+	/* 初始化执行器输出 */
+	BSP_Output_Init();
 
+	/* 初始化 OLED */
+	BSP_OLED_Init();
+	
+	/* 初始化 pH 软件换算模块 */
+	APP_PH_Init();
 	/* 初始化软件调度时间戳 */
 	g_sensor_tick  = HAL_GetTick();
 	g_display_tick = HAL_GetTick();
@@ -161,6 +171,7 @@ int main(void)
   while (1)
 {
     uint32_t now_tick = HAL_GetTick();
+    const DisplayCache_t *disp = 0;
 
     /* 任务1：传感器数据更新 + 控制逻辑计算 */
     if ((now_tick - g_sensor_tick) >= SENSOR_PERIOD_MS)
@@ -169,6 +180,7 @@ int main(void)
 
         APP_Sensor_Update(&g_sensor);
         APP_Control_Run(&g_sensor, &g_param, &g_state);
+				BSP_Output_Update(&g_state);
     }
 
     /* 任务2：界面显示刷新 */
@@ -185,25 +197,30 @@ int main(void)
         g_cloud_tick = now_tick;
 
         APP_Cloud_Upload(&g_sensor, &g_state);
-				BSP_Debug_Printf("T_x10=%ld,H_x10=%ld,L_x10=%ld,S_x10=%ld,PH_x100=%ld,P=%d,LED=%d,BEEP=%d\r\n",
-                 (long)(g_sensor.air_temp * 10.0f),
-                 (long)(g_sensor.air_humi * 10.0f),
-                 (long)(g_sensor.light_lux * 10.0f),
-                 (long)(g_sensor.soil_moisture * 10.0f),
-                 (long)(g_sensor.ph_value * 100.0f),
-                 g_state.pump_on,
-                 g_state.light_on,
-                 g_state.beep_on);
 
-				BSP_Debug_Printf("CloudPacket: %s\r\n", APP_Cloud_GetLastPacket());
+        BSP_Debug_Printf("T_x10=%ld,H_x10=%ld,L_x10=%ld,S_x10=%ld,PH_x100=%ld,P=%d,LED=%d,BEEP=%d\r\n",
+                         (long)(g_sensor.air_temp * 10.0f),
+                         (long)(g_sensor.air_humi * 10.0f),
+                         (long)(g_sensor.light_lux * 10.0f),
+                         (long)(g_sensor.soil_moisture * 10.0f),
+                         (long)(g_sensor.ph_value * 100.0f),
+                         g_state.pump_on,
+                         g_state.light_on,
+                         g_state.beep_on);
+
+        BSP_Debug_Printf("CloudPacket: %s\r\n", APP_Cloud_GetLastPacket());
+
+        disp = APP_Display_GetCache();
+        BSP_Debug_Printf("PAGE:\r\n%s\r\n%s\r\n%s\r\n%s\r\n",
+                         disp->line1,
+                         disp->line2,
+                         disp->line3,
+                         disp->line4);
     }
 
-    /* 任务4：云端报文解析
-     * 这里放在主循环中持续执行，后续适合处理串口接收缓冲区。
-     */
+    /* 任务4：云端报文解析 */
     APP_Cloud_Parse();
 
-    /* 适当延时，降低CPU空转占用 */
     HAL_Delay(10);
     /* USER CODE END WHILE */
 
