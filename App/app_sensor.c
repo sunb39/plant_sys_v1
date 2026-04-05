@@ -1,6 +1,9 @@
 #include "app_sensor.h"
 #include "plant_config.h"
-
+#include "bsp_bh1750.h"
+#include "bsp_dht11.h"
+#include "bsp_debug.h"
+#include "bsp_soil.h"
 /* APP_Sensor_Init（传感器数据初始化）
  * 说明：给传感器结构体一个默认值，便于系统上电后界面有正常初值
  */
@@ -20,8 +23,8 @@ void APP_Sensor_Init(SensorData_t *data)
 
 /* APP_Sensor_Update（传感器数据更新）
  * 说明：
- * 1. 当前 USE_MOCK_DATA=1，使用模拟值驱动整个系统的软件逻辑。
- * 2. 后续硬件到位后，只需要把 #else 部分替换为真实采集即可。
+ * 1. 各传感器分别由独立 mock 开关控制
+ * 2. 哪一路硬件调通，就把对应 mock 关闭
  */
 void APP_Sensor_Update(SensorData_t *data)
 {
@@ -30,69 +33,115 @@ void APP_Sensor_Update(SensorData_t *data)
         return;
     }
 
-#if USE_MOCK_DATA
-    /* static（静态变量）
-     * 作用：让模拟值在多次调用之间保持变化趋势，
-     * 模拟真实环境数据的动态波动。
-     */
+#if USE_MOCK_DHT11
     static float temp = 25.0f;
     static float humi = 60.0f;
-    static float lux  = 300.0f;
-    static float soil = 45.0f;
-    static float ph   = 6.5f;
+#endif
 
-    /* 模拟空气温度变化 */
+#if USE_MOCK_SOIL
+    static float soil = 45.0f;
+#endif
+
+#if USE_MOCK_PH
+    static float ph = 6.5f;
+#endif
+
+#if USE_MOCK_DHT11
+    static float temp = 25.0f;
+    static float humi = 60.0f;
+
     temp += 0.1f;
     if (temp > 30.0f)
     {
         temp = 25.0f;
     }
 
-    /* 模拟空气湿度变化 */
     humi += 0.2f;
     if (humi > 75.0f)
     {
         humi = 60.0f;
     }
 
-    /* 模拟光照变化 */
-    lux += 20.0f;
-    if (lux > 800.0f)
+    data->air_temp = temp;
+    data->air_humi = humi;
+#else
     {
-        lux = 300.0f;
-    }
+        static uint32_t dht11_tick = 0U;
+        float temp_real = 0.0f;
+        float humi_real = 0.0f;
+        uint32_t now_tick = HAL_GetTick();
 
-    /* 模拟土壤湿度变化
-     * 这里设计成逐渐下降，便于观察“自动浇水”逻辑是否会触发。
-     */
+        /* DHT11 不要高频读取，建议 2 秒读一次 */
+        if ((now_tick - dht11_tick) >= DHT11_PERIOD_MS)
+        {
+            dht11_tick = now_tick;
+
+            if (BSP_DHT11_Read(&temp_real, &humi_real) == HAL_OK)
+            {
+                data->air_temp = temp_real;
+                data->air_humi = humi_real;
+
+                BSP_Debug_Printf("DHT11 OK: T=%.1f H=%.1f\r\n",
+                                 data->air_temp,
+                                 data->air_humi);
+            }
+            else
+            {
+                BSP_Debug_Printf("DHT11 Read Fail\r\n");
+                /* 失败时保留上一次有效值 */
+            }
+        }
+    }
+#endif
+
+#if USE_MOCK_BH1750
+    {
+        static float lux = 300.0f;
+
+        lux += 20.0f;
+        if (lux > 800.0f)
+        {
+            lux = 300.0f;
+        }
+        data->light_lux = lux;
+    }
+#else
+    if (BSP_BH1750_ReadLux(&data->light_lux) != HAL_OK)
+    {
+        data->light_lux = 0.0f;
+    }
+#endif
+
+#if USE_MOCK_SOIL
+    static float soil = 45.0f;
+
     soil -= 0.3f;
     if (soil < 20.0f)
     {
         soil = 45.0f;
     }
+    data->soil_moisture = soil;
+#else
+    {
+        uint16_t soil_raw = 0U;
 
-    /* 模拟 pH 变化 */
+        if (BSP_Soil_ReadRaw(&soil_raw) == HAL_OK)
+        {
+            /* 第一阶段先显示 ADC 原始值 */
+            data->soil_moisture = (float)soil_raw;
+        }
+        /* 失败时保留上一次有效值 */
+    }
+#endif
+
+#if USE_MOCK_PH
     ph += 0.02f;
     if (ph > 7.5f)
     {
         ph = 6.5f;
     }
-
-    /* 将模拟值写入结构体 */
-    data->air_temp      = temp;
-    data->air_humi      = humi;
-    data->light_lux     = lux;
-    data->soil_moisture = soil;
-    data->ph_value      = ph;
-
+    data->ph_value = ph;
 #else
-    /* 真实硬件采集区（后续替换）
-     * 例如：
-     * data->air_temp      = BSP_DHT11_ReadTemp();
-     * data->air_humi      = BSP_DHT11_ReadHumi();
-     * data->light_lux     = BSP_BH1750_ReadLux();
-     * data->soil_moisture = BSP_ADC_ReadSoil();
-     * data->ph_value      = BSP_ADC_ReadPH();
-     */
+    /* 这里后面接入真实 pH ADC */
 #endif
 }

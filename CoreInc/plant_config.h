@@ -5,12 +5,18 @@
  * 1：当前使用模拟数据，适合没有硬件时进行软件逻辑开发
  * 0：后续切换为真实硬件采集
  */
-#define USE_MOCK_DATA           (1U)
-
+//#define USE_MOCK_DATA           (1U)
+#define USE_MOCK_DHT11   0
+#define USE_MOCK_BH1750  0
+#define USE_MOCK_SOIL    0
+#define USE_MOCK_PH      1
 /* 软件调度周期，单位：ms */
 #define SENSOR_PERIOD_MS        (500U)   /* 传感器更新周期 */
-#define DISPLAY_PERIOD_MS       (500U)   /* 显示刷新周期 */
+#define DISPLAY_PERIOD_MS       (1000U)   /* 显示刷新周期 */
 #define CLOUD_PERIOD_MS         (1000U)  /* 云端上传周期 */
+
+/* DHT11 单独采样周期，建议 >= 1000ms，联调阶段用 2000ms 更稳 */
+#define DHT11_PERIOD_MS         (2000U)
 
 /* 默认参数阈值 */
 #define DEF_SOIL_LOW_TH         (30.0f)  /* 默认土壤湿度下限阈值 */
@@ -40,4 +46,14 @@
 #define PH_MIN_VALUE            (0.0f)
 #define PH_MAX_VALUE            (14.0f)
 
+/* 水泵联调测试参数
+ * 说明：
+ * 1. 当前用于整机联调阶段
+ * 2. 水泵工作时间不宜过长，防止连续干扰显示链路
+ */
+#define PUMP_TEST_ON_MS         (2000U)   /* 水泵开启 2 秒 */
+#define PUMP_TEST_OFF_MS        (15000U)  /* 水泵关闭 15 秒 */
+
+/* 水泵停止后，等待干扰衰减再恢复 OLED */
+#define PUMP_RECOVER_DELAY_MS   (300U)
 #endif
