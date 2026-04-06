@@ -63,6 +63,8 @@ void Error_Handler(void);
 #define WATER_PUMP_CTRL_GPIO_Port GPIOB
 #define LIGHT_LED_CTRL_Pin GPIO_PIN_1
 #define LIGHT_LED_CTRL_GPIO_Port GPIOB
+#define DHT11_DATA_Pin GPIO_PIN_12
+#define DHT11_DATA_GPIO_Port GPIOB
 #define BEEP_CTRL_Pin GPIO_PIN_13
 #define BEEP_CTRL_GPIO_Port GPIOB
 

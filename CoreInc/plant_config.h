@@ -55,5 +55,5 @@
 #define PUMP_TEST_OFF_MS        (15000U)  /* 水泵关闭 15 秒 */
 
 /* 水泵停止后，等待干扰衰减再恢复 OLED */
-#define PUMP_RECOVER_DELAY_MS   (300U)
+#define PUMP_RECOVER_DELAY_MS   (500U)
 #endif
