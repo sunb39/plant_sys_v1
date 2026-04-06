@@ -1,9 +1,11 @@
 #include "bsp_dht11.h"
 #include "tim.h"
 
-#define DHT11_PORT GPIOB
-#define DHT11_PIN  GPIO_PIN_12
+//#define DHT11_PORT GPIOB
+//#define DHT11_PIN  GPIO_PIN_12
 
+#define DHT11_PORT DHT11_DATA_GPIO_Port   /* DHT11_PORT£¨DHT11¶Ë¿Ú£©¸úËæ CubeMX ±êÇ© */
+#define DHT11_PIN  DHT11_DATA_Pin         /* DHT11_PIN£¨DHT11Òý½Å£©¸úËæ CubeMX ±êÇ© */
 static void DHT11_DelayUs(uint16_t us)
 {
     __HAL_TIM_SET_COUNTER(&htim2, 0);
