@@ -9,7 +9,7 @@
 #define USE_MOCK_DHT11   0
 #define USE_MOCK_BH1750  0
 #define USE_MOCK_SOIL    0
-#define USE_MOCK_PH      1
+#define USE_MOCK_PH      0
 /* 软件调度周期，单位：ms */
 #define SENSOR_PERIOD_MS        (500U)   /* 传感器更新周期 */
 #define DISPLAY_PERIOD_MS       (1000U)   /* 显示刷新周期 */
@@ -29,22 +29,21 @@
  * =========================================================
  */
 
-/* STM32F103 12 位 ADC 最大计数值 */
-#define PH_ADC_MAX_VALUE        (4095U)
+//#define USE_MOCK_PH          (0U)        /* USE_MOCK_PH（pH模拟开关），0=真实硬件 */
 
-/* STM32 ADC 参考电压 */
-#define PH_ADC_VREF             (3.3f)
+#define PH_ADC_VREF          (3.3f)      /* PH_ADC_VREF（ADC参考电压） */
+#define PH_ADC_MAX_VALUE     (4095U)     /* PH_ADC_MAX_VALUE（12位ADC最大计数） */
 
-/* 3.3V ADC 拟合默认公式：
- * pH = PH_DEFAULT_K * voltage + PH_DEFAULT_B
- * 该参数来自你提供的 pH 模块资料中的 3.3V 曲线拟合
+#define PH_MIN_VALUE         (0.0f)      /* PH_MIN_VALUE（pH最小值） */
+#define PH_MAX_VALUE         (14.0f)     /* PH_MAX_VALUE（pH最大值） */
+
+/* 下面这组参数，按你手册里的 3.3V_ADC 拟合曲线先给默认值
+ * 说明：
+ * 1. 这组值适用于“5V pH模块 + 10k/10k 分压后送入 STM32 PA1”的场景
+ * 2. 后续你如果用缓冲液重新标定，再改成最终值
  */
-#define PH_DEFAULT_K            (-5.7541f)
-#define PH_DEFAULT_B            (16.654f)
-
-/* pH 合法范围 */
-#define PH_MIN_VALUE            (0.0f)
-#define PH_MAX_VALUE            (14.0f)
+#define PH_DEFAULT_K         (-6.3951f)  /* PH_DEFAULT_K（默认斜率） */
+#define PH_DEFAULT_B         (14.8716f)   /* PH_DEFAULT_B（默认截距） */
 
 /* 水泵联调测试参数
  * 说明：

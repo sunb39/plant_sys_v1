@@ -204,6 +204,7 @@ int main(void)
    * =========================
    */
   APP_DefaultParam_Init(&g_param);   /* 加载系统默认参数 */
+  g_param.alarm_en = 0U;   /* alarm_en（报警使能）暂时关闭，先安静联调真实 pH */
   APP_Control_Init(&g_state);        /* 初始化系统状态 */
   APP_Menu_Init();                   /* 初始化菜单页面 */
   APP_Display_Init();                /* 初始化显示缓存 */
@@ -254,72 +255,127 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-      uint32_t now_tick = HAL_GetTick();   /* now_tick（当前系统时间戳） */
+//  while (1)
+//  {
+//      uint32_t now_tick = HAL_GetTick();   /* now_tick（当前系统时间戳） */
 
-#if LIGHT_DEBUG_ENABLE
-      /* =========================================
-       * 任务1：更新传感器数据
-       * 说明：
-       * 1. 定时读取 DHT11、BH1750、土壤湿度等数据
-       * 2. 当前 pH 可先继续走 mock 或后续再接真实采样
-       * =========================================
-       */
-      if ((now_tick - g_sensor_tick) >= SENSOR_PERIOD_MS)
-      {
-          g_sensor_tick = now_tick;
-          APP_Sensor_Update(&g_sensor);
-      }
+//#if LIGHT_DEBUG_ENABLE
+//      /* =========================================
+//       * 任务1：更新传感器数据
+//       * 说明：
+//       * 1. 定时读取 DHT11、BH1750、土壤湿度等数据
+//       * 2. 当前 pH 可先继续走 mock 或后续再接真实采样
+//       * =========================================
+//       */
+//      if ((now_tick - g_sensor_tick) >= SENSOR_PERIOD_MS)
+//      {
+//          g_sensor_tick = now_tick;
+//          APP_Sensor_Update(&g_sensor);
+//      }
 
-      /* =========================================
-       * 任务2：执行自动控制逻辑
-       * 说明：
-       * 1. 让系统根据实时数据和阈值计算输出状态
-       * 2. 例如：光照低于阈值时，light_on 会被置 1
-       * =========================================
-       */
-      APP_Control_Run(&g_sensor, &g_param, &g_state);
+//      /* =========================================
+//       * 任务2：执行自动控制逻辑
+//       * 说明：
+//       * 1. 让系统根据实时数据和阈值计算输出状态
+//       * 2. 例如：光照低于阈值时，light_on 会被置 1
+//       * =========================================
+//       */
+//      APP_Control_Run(&g_sensor, &g_param, &g_state);
 
-      /* =========================================
-       * 任务3：当前阶段只验证自动补光
-       * 说明：
-       * 1. 先强制关闭水泵，避免与当前联调目标无关的动作
-       * 2. 先强制关闭蜂鸣器，减少干扰
-       * 3. 保留 light_on，让 PB1 根据光照自动亮灭
-       * =========================================
-       */
-      g_state.pump_on = 0U;
-      g_state.beep_on = 0U;
+//      /* =========================================
+//       * 任务3：当前阶段只验证自动补光
+//       * 说明：
+//       * 1. 先强制关闭水泵，避免与当前联调目标无关的动作
+//       * 2. 先强制关闭蜂鸣器，减少干扰
+//       * 3. 保留 light_on，让 PB1 根据光照自动亮灭
+//       * =========================================
+//       */
+//      g_state.pump_on = 0U;
+//      g_state.beep_on = 0U;
 
-      /* =========================================
-       * 任务4：更新执行器输出
-       * 说明：
-       * 1. 根据 g_state 中的状态位，控制实际 GPIO 输出
-       * 2. 当前阶段主要观察 PB1 补光输出是否正确
-       * =========================================
-       */
-      BSP_Output_Update(&g_state);
+//      /* =========================================
+//       * 任务4：更新执行器输出
+//       * 说明：
+//       * 1. 根据 g_state 中的状态位，控制实际 GPIO 输出
+//       * 2. 当前阶段主要观察 PB1 补光输出是否正确
+//       * =========================================
+//       */
+//      BSP_Output_Update(&g_state);
 
-      /* =========================================
-       * 任务5：刷新 OLED 显示
-       * 说明：
-       * 1. 显示当前温湿度、光照、土壤湿度以及输出状态
-       * 2. 便于观察 light_on 是否随 light_lux 变化
-       * =========================================
-       */
-      if ((now_tick - g_display_tick) >= DISPLAY_PERIOD_MS)
-      {
-          g_display_tick = now_tick;
-          APP_Display_Show(APP_Menu_GetPage(), &g_sensor, &g_param, &g_state);
-      }
+//      /* =========================================
+//       * 任务5：刷新 OLED 显示
+//       * 说明：
+//       * 1. 显示当前温湿度、光照、土壤湿度以及输出状态
+//       * 2. 便于观察 light_on 是否随 light_lux 变化
+//       * =========================================
+//       */
+//      if ((now_tick - g_display_tick) >= DISPLAY_PERIOD_MS)
+//      {
+//          g_display_tick = now_tick;
+//          //APP_Display_Show(APP_Menu_GetPage(), &g_sensor, &g_param, &g_state);
+//		  APP_Display_Show(PAGE_SENSOR, &g_sensor, &g_param, &g_state);
+//	  }
 
-#else
-      /* 后续如果不走自动补光联调，可在这里扩展其它逻辑 */
-#endif
+//#else
+//      /* 后续如果不走自动补光联调，可在这里扩展其它逻辑 */
+//#endif
 
-      HAL_Delay(10);
-  }
+//      HAL_Delay(10);
+//  }
+
+//ph测试
+while (1)
+{
+    static uint32_t ph_tick = 0U;   /* ph_tick（pH刷新节拍） */
+    uint16_t ph_raw = 0U;           /* ph_raw（pH原始ADC值） */
+    float ph_v = 0.0f;              /* ph_v（PA1节点电压） */
+    float ph_val = 0.0f;            /* ph_val（换算后的pH值） */
+
+    char line2[24];
+    char line3[24];
+    char line4[24];
+
+    /* 每 500ms 更新一次 pH，便于观察变化 */
+    if ((HAL_GetTick() - ph_tick) >= 500U)
+    {
+        ph_tick = HAL_GetTick();
+
+        if (BSP_PH_ReadRaw(&ph_raw) == HAL_OK)
+        {
+            /* ADC原始值转PA1节点电压 */
+            ph_v = APP_PH_AdcToVoltage(ph_raw);
+
+            /* ADC原始值转pH值 */
+            ph_val = APP_PH_GetValue(ph_raw);
+
+            BSP_OLED_Clear();
+            BSP_OLED_ShowString(0, 0, "PH TEST");
+
+            /* 第2行：显示原始ADC值 */
+            snprintf(line2, sizeof(line2), "RAW:%4u", ph_raw);
+
+            /* 第3行：显示PA1电压 */
+            snprintf(line3, sizeof(line3), "V:%.3f", ph_v);
+
+            /* 第4行：显示换算后的pH */
+            snprintf(line4, sizeof(line4), "PH:%.2f", ph_val);
+
+            BSP_OLED_ShowString(0, 2, line2);
+            BSP_OLED_ShowString(0, 4, line3);
+            BSP_OLED_ShowString(0, 6, line4);
+            BSP_OLED_Refresh();
+        }
+        else
+        {
+            BSP_OLED_Clear();
+            BSP_OLED_ShowString(0, 0, "PH TEST");
+            BSP_OLED_ShowString(0, 2, "ADC FAIL");
+            BSP_OLED_Refresh();
+        }
+    }
+
+    HAL_Delay(10);
+}
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */

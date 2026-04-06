@@ -141,12 +141,17 @@ void BSP_Output_Update(const SystemState_t *state)
      * 说明：当前默认按高电平触发方式处理，
      * 若后续实际模块逻辑相反，再统一调整。
      */
-    if (state->beep_on)
-    {
-        HAL_GPIO_WritePin(BEEP_CTRL_GPIO_Port, BEEP_CTRL_Pin, GPIO_PIN_SET);
-    }
-    else
-    {
-        HAL_GPIO_WritePin(BEEP_CTRL_GPIO_Port, BEEP_CTRL_Pin, GPIO_PIN_RESET);
-    }
+    /* 蜂鸣器控制（低电平触发版）
+ * 说明：
+ * 1. beep_on = 1 时输出低电平，蜂鸣器响
+ * 2. beep_on = 0 时输出高电平，蜂鸣器停止
+ */
+if (state->beep_on)
+{
+    HAL_GPIO_WritePin(BEEP_CTRL_GPIO_Port, BEEP_CTRL_Pin, GPIO_PIN_RESET);
+}
+else
+{
+    HAL_GPIO_WritePin(BEEP_CTRL_GPIO_Port, BEEP_CTRL_Pin, GPIO_PIN_SET);
+}
 }

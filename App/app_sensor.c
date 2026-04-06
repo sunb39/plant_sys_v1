@@ -4,6 +4,7 @@
 #include "bsp_dht11.h"
 #include "bsp_debug.h"
 #include "bsp_soil.h"
+#include "app_ph.h"
 /* APP_Sensor_Init（传感器数据初始化）
  * 说明：给传感器结构体一个默认值，便于系统上电后界面有正常初值
  */
@@ -43,7 +44,23 @@ void APP_Sensor_Update(SensorData_t *data)
 #endif
 
 #if USE_MOCK_PH
-    static float ph = 6.5f;
+    ph += 0.02f;
+    if (ph > 7.5f)
+    {
+        ph = 6.5f;
+    }
+    data->ph_value = ph;
+#else
+    {
+        uint16_t ph_raw = 0U;   /* ph_raw（pH 原始 ADC 值） */
+
+        if (BSP_PH_ReadRaw(&ph_raw) == HAL_OK)
+        {
+            /* 直接把 ADC 原始值换算成 pH */
+            data->ph_value = APP_PH_GetValue(ph_raw);
+        }
+        /* 失败时保留上一次有效值 */
+    }
 #endif
 
 #if USE_MOCK_DHT11
