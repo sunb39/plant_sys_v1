@@ -1,25 +1,21 @@
-
-
-
 /* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+///**
+//  ******************************************************************************
+//  * @file           : main.c
+//  * @brief          : Main program body
+//  ******************************************************************************
+//  * @attention
+//  *
+//  * Copyright (c) 2026 STMicroelectronics.
+//  * All rights reserved.
+//  *
+//  * This software is licensed under terms that can be found in the LICENSE file
+//  * in the root directory of this software component.
+//  * If no LICENSE file comes with this software, it is provided AS-IS.
+//  *
+//  ******************************************************************************
+//  */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
@@ -44,6 +40,7 @@
 #include "bsp_bh1750.h"
 #include "bsp_dht11.h"
 #include "bsp_soil.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,19 +51,33 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-/* LIGHT_DEBUG_ENABLE（自动补光联调开关）
- * 作用：
- * 1. =1 时，进入“自动补光联调版”
- * 2. =0 时，可按以后需求再恢复为其它联调逻辑
+/* 水泵单次运行时间
+ * 说明：检测到土壤过干后，先运行固定时间，再停泵观察
  */
-#define LIGHT_DEBUG_ENABLE      (1U)
+#define PUMP_RUN_MS             (2000U)
 
-/* LIGHT_TEST_TH（自动补光测试阈值，单位 lux）
- * 作用：
- * 1. 当光照值低于该阈值时，系统判定环境偏暗
- * 2. 当前阶段先设为 500 lux，方便手遮挡和手机灯照射测试
+/* 水泵启动前提示保留时间 */
+#define PUMP_PRESTART_MSG_MS    (800U)
+
+/* 水泵停止后恢复等待时间 */
+#define PUMP_RECOVER_DELAY_MS   (500U)
+
+/* 两次浇水动作之间的最短等待时间
+ * 说明：避免水泵频繁启停
  */
-#define LIGHT_TEST_TH           (100.0f)
+#define PUMP_COOLDOWN_MS        (15000U)
+
+/* 当前整机参数
+ * 说明：
+ * 1. 土壤湿度当前仍用 ADC 原始值，数值越大越干
+ * 2. 光照阈值按你室内实测先设为 100 lux
+ * 3. pH 报警范围当前先设得宽一点，避免误报
+ */
+#define SOIL_DRY_TH_RAW         (4200.0f)
+#define LIGHT_ON_TH_LUX         (100.0f)
+#define PH_ALARM_LOW_TH         (5.0f)
+#define PH_ALARM_HIGH_TH        (8.5f)
+
 
 /* USER CODE END PD */
 
@@ -79,43 +90,38 @@
 
 /* USER CODE BEGIN PV */
 
-/* 全局传感器数据结构体
- * g_sensor：保存当前温度、湿度、光照、土壤湿度、pH 等实时数据
- */
-SensorData_t  g_sensor;
+SensorData_t  g_sensor;        /* g_sensor（实时传感器数据） */
+SystemParam_t g_param;         /* g_param（系统参数） */
+SystemState_t g_state;         /* g_state（系统状态） */
 
-/* 全局系统参数结构体
- * g_param：保存阈值、自动功能使能等控制参数
- */
-SystemParam_t g_param;
+uint32_t g_sensor_tick  = 0U;  /* g_sensor_tick（传感器调度时间戳） */
+uint32_t g_display_tick = 0U;  /* g_display_tick（显示调度时间戳） */
 
-/* 全局系统状态结构体
- * g_state：保存水泵、补光、蜂鸣器、通信状态等运行状态
- */
-SystemState_t g_state;
+uint8_t  g_i2c_pause = 0U;          /* g_i2c_pause（I2C暂停标志） */
+uint8_t  g_pump_running = 0U;       /* g_pump_running（水泵实际运行标志） */
+uint32_t g_pump_tick = 0U;          /* g_pump_tick（水泵启动时间戳） */
+uint32_t g_pump_lock_until = 0U;    /* g_pump_lock_until（下次允许开泵的最早时刻） */
 
-/* 周期任务时间戳 */
-uint32_t g_sensor_tick  = 0U;   /* 传感器采样时间戳 */
-uint32_t g_display_tick = 0U;   /* OLED 刷新时间戳 */
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-
 /* USER CODE BEGIN PFP */
+
 static void APP_DefaultParam_Init(SystemParam_t *param);
 static void OLED_ShowReady(void);
+static void OLED_ShowWatering(void);
+static void OLED_I2C_BusRecover(void);
+static void OLED_RecoverAfterPump(void);
+
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-/* OLED_ShowReady（显示系统就绪页面）
- * 作用：
- * 1. 系统初始化完成后，在 OLED 上显示 READY
- * 2. 用于提示当前程序已正常启动
- */
+/* OLED_ShowReady（显示系统就绪界面） */
 static void OLED_ShowReady(void)
 {
     BSP_OLED_Clear();
@@ -124,13 +130,75 @@ static void OLED_ShowReady(void)
     BSP_OLED_Refresh();
 }
 
-/* APP_DefaultParam_Init（默认参数初始化）
- * 作用：
- * 1. 给系统参数结构体加载默认阈值
- * 2. 打开自动浇水、自动补光、报警功能的总使能
- * 说明：
- * 这些默认值主要来自 plant_config.h 中的宏定义
- */
+/* OLED_ShowWatering（显示浇水提示界面） */
+static void OLED_ShowWatering(void)
+{
+    BSP_OLED_Clear();
+    BSP_OLED_ShowString(0, 0, "PLANT SYS");
+    BSP_OLED_ShowString(0, 2, "WATERING...");
+    BSP_OLED_Refresh();
+}
+
+/* OLED_I2C_BusRecover（I2C总线恢复） */
+static void OLED_I2C_BusRecover(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    uint8_t i = 0U;
+
+    HAL_I2C_DeInit(&hi2c1);
+
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    /* 释放总线 */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+    HAL_Delay(1);
+
+    /* SCL 输出 9 个时钟脉冲 */
+    for (i = 0U; i < 9U; i++)
+    {
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+        HAL_Delay(1);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+        HAL_Delay(1);
+    }
+
+    /* 产生一次 STOP 条件 */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+    HAL_Delay(1);
+
+    MX_I2C1_Init();
+}
+
+/* OLED_RecoverAfterPump（停泵后恢复 OLED 显示） */
+static void OLED_RecoverAfterPump(void)
+{
+    OLED_I2C_BusRecover();
+
+    HAL_Delay(10);
+
+    BSP_OLED_Init();
+    BSP_OLED_Clear();
+    BSP_OLED_ShowString(0, 0, "PLANT SYS");
+    BSP_OLED_ShowString(0, 2, "PUMP DONE");
+    BSP_OLED_Refresh();
+
+    HAL_Delay(1000);
+
+    OLED_ShowReady();
+}
+
+/* APP_DefaultParam_Init（默认参数初始化） */
 static void APP_DefaultParam_Init(SystemParam_t *param)
 {
     if (param == 0)
@@ -138,17 +206,15 @@ static void APP_DefaultParam_Init(SystemParam_t *param)
         return;
     }
 
-    /* 载入默认阈值 */
     param->soil_low_th   = DEF_SOIL_LOW_TH;
     param->light_low_th  = DEF_LIGHT_LOW_TH;
     param->ph_low_th     = DEF_PH_LOW_TH;
     param->ph_high_th    = DEF_PH_HIGH_TH;
-
-    /* 打开默认功能使能 */
     param->auto_water_en = 1U;
     param->auto_light_en = 1U;
     param->alarm_en      = 1U;
 }
+
 
 /* USER CODE END 0 */
 
@@ -158,227 +224,213 @@ static void APP_DefaultParam_Init(SystemParam_t *param)
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* 复位所有外设，初始化 Flash 接口和 SysTick */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
-  /* 配置系统时钟 */
+  /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
 
-  /* 初始化所有已配置外设 */
+  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
   MX_I2C1_Init();
   MX_TIM2_Init();
   MX_USART1_UART_Init();
-
   /* USER CODE BEGIN 2 */
 
-  /* =========================
+ /* =========================
    * 底层模块初始化
-   * 说明：
-   * 先初始化底层 BSP，再初始化上层 APP
    * =========================
    */
-  BSP_OLED_Init();      /* OLED 初始化 */
-  BSP_BH1750_Init();    /* 光照传感器初始化 */
-  BSP_DHT11_Init();     /* 温湿度传感器初始化 */
-  BSP_Soil_Init();      /* 土壤湿度 ADC 初始化 */
-  BSP_Debug_Init();     /* 串口调试输出初始化 */
+  BSP_OLED_Init();
+  BSP_BH1750_Init();
+  BSP_DHT11_Init();
+  BSP_Soil_Init();
+  BSP_Debug_Init();
 
   /* =========================
    * 上层参数与状态初始化
    * =========================
    */
-  APP_DefaultParam_Init(&g_param);   /* 加载系统默认参数 */
-  g_param.alarm_en = 0U;   /* alarm_en（报警使能）暂时关闭，先安静联调真实 pH */
-  APP_Control_Init(&g_state);        /* 初始化系统状态 */
-  APP_Menu_Init();                   /* 初始化菜单页面 */
-  APP_Display_Init();                /* 初始化显示缓存 */
-  APP_Sensor_Init(&g_sensor);        /* 初始化传感器数据默认值 */
-
-  /* 当前阶段云端不上线，先保留接口 */
-  /* APP_Cloud_Init(&g_state); */
-
-  /* 执行器初始化
-   * 作用：上电后先关闭水泵、补光、蜂鸣器，避免误动作
-   */
+  APP_DefaultParam_Init(&g_param);
+  APP_Control_Init(&g_state);
+  APP_Menu_Init();
+  APP_Display_Init();
+  APP_Sensor_Init(&g_sensor);
   BSP_Output_Init();
-
-  /* pH 软件模块初始化
-   * 说明：当前 pH 仍可先保留软件接口，后续再接真实硬件
-   */
   APP_PH_Init();
 
-  /* 初始化周期任务时间戳 */
   g_sensor_tick  = HAL_GetTick();
   g_display_tick = HAL_GetTick();
 
-  /* 关闭 PC13 板载 LED
-   * 说明：
-   * 大多数 Blue Pill 板载 LED 为低电平点亮、高电平熄灭
-   */
+  /* 关闭 PC13 板载 LED */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 
-  /* 设置当前阶段的自动补光测试阈值
-   * 说明：
-   * 1. 当前先设为 100 lux，方便联调
-   * 2. 你后面可根据现场环境改成更合适的值
+  /* =========================
+   * 当前整机工作参数
+   * =========================
    */
+  g_param.soil_low_th   = SOIL_DRY_TH_RAW;     /* 土壤干燥阈值（ADC原始值） */
+  g_param.light_low_th  = LIGHT_ON_TH_LUX;     /* 自动补光开启阈值 */
+  g_param.ph_low_th     = PH_ALARM_LOW_TH;     /* pH 报警下限 */
+  g_param.ph_high_th    = PH_ALARM_HIGH_TH;    /* pH 报警上限 */
+  g_param.auto_water_en = 1U;
+  g_param.auto_light_en = 1U;
+  g_param.alarm_en      = 1U;
 
-  g_param.light_low_th = LIGHT_TEST_TH;   /* light_low_th（补光下阈值）当前按室内实测设为 100 lux */
-  /* 为了当前联调更稳定，先明确状态默认值 */
+  /* 初始状态 */
   g_state.pump_on  = 0U;
   g_state.light_on = 0U;
   g_state.beep_on  = 0U;
 
-  /* 显示 READY 页面，提示系统启动完成 */
-  OLED_ShowReady();
+  g_i2c_pause      = 0U;
+  g_pump_running   = 0U;
+  g_pump_tick      = 0U;
+  g_pump_lock_until = HAL_GetTick();
 
-  /* 稳定等待一小段时间 */
+  OLED_ShowReady();
   HAL_Delay(1000);
+
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-//  while (1)
-//  {
-//      uint32_t now_tick = HAL_GetTick();   /* now_tick（当前系统时间戳） */
 
-//#if LIGHT_DEBUG_ENABLE
-//      /* =========================================
-//       * 任务1：更新传感器数据
-//       * 说明：
-//       * 1. 定时读取 DHT11、BH1750、土壤湿度等数据
-//       * 2. 当前 pH 可先继续走 mock 或后续再接真实采样
-//       * =========================================
-//       */
-//      if ((now_tick - g_sensor_tick) >= SENSOR_PERIOD_MS)
-//      {
-//          g_sensor_tick = now_tick;
-//          APP_Sensor_Update(&g_sensor);
-//      }
+ while (1)
+  {
+      uint32_t now_tick = HAL_GetTick();
+      uint8_t pump_request = 0U;   /* pump_request（自动控制层给出的开泵请求） */
 
-//      /* =========================================
-//       * 任务2：执行自动控制逻辑
-//       * 说明：
-//       * 1. 让系统根据实时数据和阈值计算输出状态
-//       * 2. 例如：光照低于阈值时，light_on 会被置 1
-//       * =========================================
-//       */
-//      APP_Control_Run(&g_sensor, &g_param, &g_state);
+      /* =========================
+       * 任务1：更新传感器数据
+       * 说明：
+       * 水泵运行期间暂停 I2C 相关访问，减少干扰
+       * =========================
+       */
+      if ((now_tick - g_sensor_tick) >= SENSOR_PERIOD_MS)
+      {
+          g_sensor_tick = now_tick;
 
-//      /* =========================================
-//       * 任务3：当前阶段只验证自动补光
-//       * 说明：
-//       * 1. 先强制关闭水泵，避免与当前联调目标无关的动作
-//       * 2. 先强制关闭蜂鸣器，减少干扰
-//       * 3. 保留 light_on，让 PB1 根据光照自动亮灭
-//       * =========================================
-//       */
-//      g_state.pump_on = 0U;
-//      g_state.beep_on = 0U;
+          if (g_i2c_pause == 0U)
+          {
+              APP_Sensor_Update(&g_sensor);
+          }
+      }
 
-//      /* =========================================
-//       * 任务4：更新执行器输出
-//       * 说明：
-//       * 1. 根据 g_state 中的状态位，控制实际 GPIO 输出
-//       * 2. 当前阶段主要观察 PB1 补光输出是否正确
-//       * =========================================
-//       */
-//      BSP_Output_Update(&g_state);
+      /* =========================
+       * 任务2：执行自动控制逻辑
+       * 说明：
+       * 这里先得到“期望状态”
+       * =========================
+       */
+      APP_Control_Run(&g_sensor, &g_param, &g_state);
 
-//      /* =========================================
-//       * 任务5：刷新 OLED 显示
-//       * 说明：
-//       * 1. 显示当前温湿度、光照、土壤湿度以及输出状态
-//       * 2. 便于观察 light_on 是否随 light_lux 变化
-//       * =========================================
-//       */
-//      if ((now_tick - g_display_tick) >= DISPLAY_PERIOD_MS)
-//      {
-//          g_display_tick = now_tick;
-//          //APP_Display_Show(APP_Menu_GetPage(), &g_sensor, &g_param, &g_state);
-//		  APP_Display_Show(PAGE_SENSOR, &g_sensor, &g_param, &g_state);
-//	  }
+      /* 先保存自动控制层给出的开泵请求 */
+      pump_request = g_state.pump_on;
 
-//#else
-//      /* 后续如果不走自动补光联调，可在这里扩展其它逻辑 */
-//#endif
+      /* =========================
+       * 任务3：水泵实际执行逻辑
+       * 说明：
+       * 1. 检测到土壤过干时，不直接无限开泵
+       * 2. 采用“单次运行 + 冷却等待”的方式
+       * 3. 开泵时暂停 I2C，停泵后恢复 OLED / BH1750
+       * =========================
+       */
+      if (g_pump_running == 0U)
+      {
+          /* 当前未开泵 */
+          g_state.pump_on = 0U;
 
-//      HAL_Delay(10);
-//  }
+          if ((pump_request != 0U) && (now_tick >= g_pump_lock_until))
+          {
+              /* 开泵前先提示 */
+              OLED_ShowWatering();
+              HAL_Delay(PUMP_PRESTART_MSG_MS);
 
-//ph测试
-while (1)
-{
-    static uint32_t ph_tick = 0U;   /* ph_tick（pH刷新节拍） */
-    uint16_t ph_raw = 0U;           /* ph_raw（pH原始ADC值） */
-    float ph_v = 0.0f;              /* ph_v（PA1节点电压） */
-    float ph_val = 0.0f;            /* ph_val（换算后的pH值） */
+              /* 开泵并暂停 I2C */
+              g_i2c_pause = 1U;
+              g_pump_running = 1U;
+              g_pump_tick = HAL_GetTick();
+              g_state.pump_on = 1U;
+          }
+      }
+      else
+      {
+          /* 当前正在开泵 */
+          g_state.pump_on = 1U;
 
-    char line2[24];
-    char line3[24];
-    char line4[24];
+          if ((now_tick - g_pump_tick) >= PUMP_RUN_MS)
+          {
+              /* 到时先关泵 */
+              g_state.pump_on = 0U;
+              BSP_Output_Update(&g_state);
 
-    /* 每 500ms 更新一次 pH，便于观察变化 */
-    if ((HAL_GetTick() - ph_tick) >= 500U)
-    {
-        ph_tick = HAL_GetTick();
+              g_pump_running = 0U;
 
-        if (BSP_PH_ReadRaw(&ph_raw) == HAL_OK)
-        {
-            /* ADC原始值转PA1节点电压 */
-            ph_v = APP_PH_AdcToVoltage(ph_raw);
+              /* 等待干扰衰减 */
+              HAL_Delay(PUMP_RECOVER_DELAY_MS);
 
-            /* ADC原始值转pH值 */
-            ph_val = APP_PH_GetValue(ph_raw);
+              /* 恢复 OLED / I2C */
+              OLED_RecoverAfterPump();
+              g_i2c_pause = 0U;
 
-            BSP_OLED_Clear();
-            BSP_OLED_ShowString(0, 0, "PH TEST");
+              /* 设置下次允许开泵的最早时刻 */
+              g_pump_lock_until = HAL_GetTick() + PUMP_COOLDOWN_MS;
 
-            /* 第2行：显示原始ADC值 */
-            snprintf(line2, sizeof(line2), "RAW:%4u", ph_raw);
+              /* 防止恢复后立刻被刷新覆盖 */
+              g_display_tick = HAL_GetTick();
+          }
+      }
 
-            /* 第3行：显示PA1电压 */
-            snprintf(line3, sizeof(line3), "V:%.3f", ph_v);
+      /* =========================
+       * 任务4：更新实际输出
+       * 说明：
+       * 1. PB0：水泵
+       * 2. PB1：补光灯
+       * 3. PB13：蜂鸣器（pH异常报警）
+       * =========================
+       */
+      BSP_Output_Update(&g_state);
 
-            /* 第4行：显示换算后的pH */
-            snprintf(line4, sizeof(line4), "PH:%.2f", ph_val);
+      /* =========================
+       * 任务5：刷新 OLED 显示
+       * 说明：
+       * 固定显示传感器页，确保能看到土壤湿度 / 光照 / pH
+       * =========================
+       */
+      if ((now_tick - g_display_tick) >= DISPLAY_PERIOD_MS)
+      {
+          g_display_tick = now_tick;
 
-            BSP_OLED_ShowString(0, 2, line2);
-            BSP_OLED_ShowString(0, 4, line3);
-            BSP_OLED_ShowString(0, 6, line4);
-            BSP_OLED_Refresh();
-        }
-        else
-        {
-            BSP_OLED_Clear();
-            BSP_OLED_ShowString(0, 0, "PH TEST");
-            BSP_OLED_ShowString(0, 2, "ADC FAIL");
-            BSP_OLED_Refresh();
-        }
-    }
+          if (g_i2c_pause == 0U)
+          {
+              APP_Display_Show(PAGE_SENSOR, &g_sensor, &g_param, &g_state);
+          }
+      }
 
-    HAL_Delay(10);
-}
-  /* USER CODE END WHILE */
+      HAL_Delay(10);
+  }
 
-  /* USER CODE BEGIN 3 */
+
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
 
@@ -409,10 +461,10 @@ void SystemClock_Config(void)
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
@@ -420,9 +472,8 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-  PeriphClkInit.AdcClockSelection    = RCC_ADCPCLK2_DIV6;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -440,13 +491,12 @@ void SystemClock_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  __disable_irq();
-  while (1)
-  {
-  }
+//  __disable_irq();
+//  while (1)
+//  {
+//  }
   /* USER CODE END Error_Handler_Debug */
 }
-
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
@@ -458,8 +508,7 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* 这里可根据需要加入调试打印 */
+//  /* 这里可根据需要加入调试打印 */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-

@@ -21,7 +21,7 @@
 /* 默认参数阈值 */
 #define DEF_SOIL_LOW_TH         (30.0f)  /* 默认土壤湿度下限阈值 */
 #define DEF_LIGHT_LOW_TH        (400.0f) /* 默认光照下限阈值 */
-#define DEF_PH_LOW_TH           (5.5f)   /* 默认pH下限阈值 */
+#define DEF_PH_LOW_TH           (5.0f)   /* 默认pH下限阈值 */
 #define DEF_PH_HIGH_TH          (7.5f)   /* 默认pH上限阈值 */
 
 /* =========================================================
@@ -42,8 +42,8 @@
  * 1. 这组值适用于“5V pH模块 + 10k/10k 分压后送入 STM32 PA1”的场景
  * 2. 后续你如果用缓冲液重新标定，再改成最终值
  */
-#define PH_DEFAULT_K         (-6.3951f)  /* PH_DEFAULT_K（默认斜率） */
-#define PH_DEFAULT_B         (14.8716f)   /* PH_DEFAULT_B（默认截距） */
+#define PH_DEFAULT_K         (-6.3340f)  /* PH_DEFAULT_K（默认斜率） */
+#define PH_DEFAULT_B         (14.9360f)   /* PH_DEFAULT_B（默认截距） */
 
 /* 水泵联调测试参数
  * 说明：
