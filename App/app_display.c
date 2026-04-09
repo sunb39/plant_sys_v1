@@ -95,6 +95,35 @@
 #include <stdio.h>
 #include <string.h>
 
+
+static float APP_Display_SoilRawToPercent(float raw)
+{
+    float pct;
+
+    if (raw <= 1800.0f)
+    {
+        return 100.0f;
+    }
+
+    if (raw >= 4200.0f)
+    {
+        return 0.0f;
+    }
+
+    pct = (4200.0f - raw) * 100.0f / (4200.0f - 1800.0f);
+
+    if (pct < 0.0f)
+    {
+        pct = 0.0f;
+    }
+
+    if (pct > 100.0f)
+    {
+        pct = 100.0f;
+    }
+
+    return pct;
+}
 /* g_display_cache£¨ÏÔÊ¾»º´æ£© */
 static DisplayCache_t g_display_cache;
 
@@ -136,8 +165,12 @@ void APP_Display_Show(PageId_t page,
             snprintf(g_display_cache.line1, sizeof(g_display_cache.line1),
                      "T:%.1f H:%.1f", data->air_temp, data->air_humi);
 
-            snprintf(g_display_cache.line2, sizeof(g_display_cache.line2),
-                     "S:%.0f L:%.0f", data->soil_moisture, data->light_lux);
+            {
+    float soil_pct = APP_Display_SoilRawToPercent(data->soil_moisture);
+
+    snprintf(g_display_cache.line2, sizeof(g_display_cache.line2),
+             "S:%.1f%% L:%.0f", soil_pct, data->light_lux);
+}
 
             snprintf(g_display_cache.line3, sizeof(g_display_cache.line3),
                      "P:%.2f", data->ph_value);

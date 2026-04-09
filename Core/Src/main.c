@@ -33,19 +33,25 @@
 #include "app_display.h"
 #include "app_menu.h"
 #include "app_cloud.h"
-#include "bsp_debug.h"
 #include "bsp_oled.h"
 #include "bsp_output.h"
 #include "app_ph.h"
 #include "bsp_bh1750.h"
 #include "bsp_dht11.h"
 #include "bsp_soil.h"
+#include "bsp_esp8266.h"
+#include <string.h>
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct
+{
+    uint8_t active;     /* 是否处于远程强制控制期 */
+    uint8_t value;      /* 强制值 0/1 */
+    uint32_t until;     /* 到期时间戳 */
+} RemoteOverride_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -76,9 +82,12 @@
 #define SOIL_DRY_TH_RAW         (4200.0f)
 #define LIGHT_ON_TH_LUX         (100.0f)
 #define PH_ALARM_LOW_TH         (5.0f)
-#define PH_ALARM_HIGH_TH        (8.5f)
+#define PH_ALARM_HIGH_TH        (7.5f)
 
+#define ONENET_RETRY_PERIOD_MS   (10000U)   /* OneNET 重连周期 10 秒 */
 
+#define CLOUD_UPLOAD_PERIOD_MS    (1000U)   /* CLOUD_UPLOAD_PERIOD_MS（上云周期），当前设为5秒 */
+#define REMOTE_OVERRIDE_MS      (10000U)   /* 云端服务控制保持 10 秒 */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -101,8 +110,12 @@ uint8_t  g_i2c_pause = 0U;          /* g_i2c_pause（I2C暂停标志） */
 uint8_t  g_pump_running = 0U;       /* g_pump_running（水泵实际运行标志） */
 uint32_t g_pump_tick = 0U;          /* g_pump_tick（水泵启动时间戳） */
 uint32_t g_pump_lock_until = 0U;    /* g_pump_lock_until（下次允许开泵的最早时刻） */
+uint32_t g_cloud_tick = 0U;   /* g_cloud_tick（云端上传调度时间戳） */
+RemoteOverride_t g_remote_pump;
+RemoteOverride_t g_remote_light;
+RemoteOverride_t g_remote_beep;
 
-
+uint32_t g_onenet_retry_tick = 0U;   /* OneNET 重连调度时间戳 */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -115,6 +128,9 @@ static void OLED_ShowWatering(void);
 static void OLED_I2C_BusRecover(void);
 static void OLED_RecoverAfterPump(void);
 
+static void APP_ClearRemoteOverrides(void);
+static void APP_ApplyRemoteOverrides(uint32_t now_tick, SystemState_t *state);
+static void APP_HandleServiceCommand(const ESP_ServiceCmd_t *cmd, uint32_t now_tick);
 
 /* USER CODE END PFP */
 
@@ -215,6 +231,87 @@ static void APP_DefaultParam_Init(SystemParam_t *param)
     param->alarm_en      = 1U;
 }
 
+/* APP_ClearRemoteOverrides（清空远程强制控制） */
+static void APP_ClearRemoteOverrides(void)
+{
+    memset(&g_remote_pump,  0, sizeof(g_remote_pump));
+    memset(&g_remote_light, 0, sizeof(g_remote_light));
+    memset(&g_remote_beep,  0, sizeof(g_remote_beep));
+}
+
+/* APP_HandleServiceCommand（处理 OneNET 服务调用）
+ * 说明：
+ * 1. 收到服务调用后，不直接永久改自动控制逻辑
+ * 2. 只做一个 10 秒的远程强制控制窗口
+ * 3. 到期后系统重新回到自动控制
+ */
+static void APP_HandleServiceCommand(const ESP_ServiceCmd_t *cmd, uint32_t now_tick)
+{
+    if (cmd == 0)
+    {
+        return;
+    }
+
+    switch (cmd->type)
+    {
+        case ESP_SERVICE_SET_PUMP:
+            g_remote_pump.active = 1U;
+            g_remote_pump.value  = cmd->value;
+            g_remote_pump.until  = now_tick + REMOTE_OVERRIDE_MS;
+            break;
+
+        case ESP_SERVICE_SET_LIGHT:
+            g_remote_light.active = 1U;
+            g_remote_light.value  = cmd->value;
+            g_remote_light.until  = now_tick + REMOTE_OVERRIDE_MS;
+            break;
+
+        case ESP_SERVICE_SET_BEEP:
+            g_remote_beep.active = 1U;
+            g_remote_beep.value  = cmd->value;
+            g_remote_beep.until  = now_tick + REMOTE_OVERRIDE_MS;
+            break;
+
+        default:
+            break;
+    }
+}
+
+/* APP_ApplyRemoteOverrides（应用远程强制控制） */
+static void APP_ApplyRemoteOverrides(uint32_t now_tick, SystemState_t *state)
+{
+    if (state == 0)
+    {
+        return;
+    }
+
+    if ((g_remote_pump.active != 0U) && (now_tick < g_remote_pump.until))
+    {
+        state->pump_on = g_remote_pump.value;
+    }
+    else
+    {
+        g_remote_pump.active = 0U;
+    }
+
+    if ((g_remote_light.active != 0U) && (now_tick < g_remote_light.until))
+    {
+        state->light_on = g_remote_light.value;
+    }
+    else
+    {
+        g_remote_light.active = 0U;
+    }
+
+    if ((g_remote_beep.active != 0U) && (now_tick < g_remote_beep.until))
+    {
+        state->beep_on = g_remote_beep.value;
+    }
+    else
+    {
+        g_remote_beep.active = 0U;
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -257,12 +354,12 @@ int main(void)
    * 底层模块初始化
    * =========================
    */
+
   BSP_OLED_Init();
   BSP_BH1750_Init();
   BSP_DHT11_Init();
   BSP_Soil_Init();
-  BSP_Debug_Init();
-
+  /* 注意：USART1 已经给 ESP8266 用，不能再初始化调试串口输出 */
   /* =========================
    * 上层参数与状态初始化
    * =========================
@@ -274,10 +371,23 @@ int main(void)
   APP_Sensor_Init(&g_sensor);
   BSP_Output_Init();
   APP_PH_Init();
+  
+	  /* 云端与 ESP8266 初始化 */
+	APP_Cloud_Init(&g_state);
+	BSP_ESP8266_Init();
+	APP_ClearRemoteOverrides();
 
+	g_cloud_tick = HAL_GetTick();
+	g_onenet_retry_tick = HAL_GetTick();
+
+	g_state.wifi_ok  = 0U;
+	g_state.cloud_ok = 0U;
+  
   g_sensor_tick  = HAL_GetTick();
   g_display_tick = HAL_GetTick();
 
+	OLED_ShowReady();
+	HAL_Delay(300);
   /* 关闭 PC13 板载 LED */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 
@@ -303,8 +413,8 @@ int main(void)
   g_pump_tick      = 0U;
   g_pump_lock_until = HAL_GetTick();
 
-  OLED_ShowReady();
-  HAL_Delay(1000);
+//  OLED_ShowReady();
+//  HAL_Delay(1000);
 
 
   /* USER CODE END 2 */
@@ -316,7 +426,25 @@ int main(void)
   {
       uint32_t now_tick = HAL_GetTick();
       uint8_t pump_request = 0U;   /* pump_request（自动控制层给出的开泵请求） */
+		
+	  ESP_ServiceCmd_t service_cmd;
+      memset(&service_cmd, 0, sizeof(service_cmd));
 
+      /* 任务0：轮询 OneNET 服务调用
+       * 说明：
+       * 1. 收到 SetPump / SetLight / SetBeep 的 invoke 消息
+       * 2. 先登记成 10 秒远程强制控制
+       * 3. 再回复 invoke_reply
+       */
+      if (BSP_ESP8266_PollService(&service_cmd) != 0U)
+      {
+          APP_HandleServiceCommand(&service_cmd, now_tick);
+
+          if (BSP_ESP8266_ReplyService(&service_cmd, 1U) != HAL_OK)
+          {
+              g_state.cloud_ok = 0U;
+          }
+      }
       /* =========================
        * 任务1：更新传感器数据
        * 说明：
@@ -340,7 +468,10 @@ int main(void)
        * =========================
        */
       APP_Control_Run(&g_sensor, &g_param, &g_state);
-
+		
+	  /* 云端服务控制优先级高于自动控制，但只保持一小段时间 */
+      APP_ApplyRemoteOverrides(now_tick, &g_state);
+	  
       /* 先保存自动控制层给出的开泵请求 */
       pump_request = g_state.pump_on;
 
@@ -423,16 +554,71 @@ int main(void)
               APP_Display_Show(PAGE_SENSOR, &g_sensor, &g_param, &g_state);
           }
       }
+		
+	   /* ========================================================
+       * 任务6：OneNET 连接维护 + 定时上报属性
+       * ======================================================== */
+      if (g_state.cloud_ok == 0U)
+      {
+          if ((now_tick - g_onenet_retry_tick) >= ONENET_RETRY_PERIOD_MS)
+          {
+              g_onenet_retry_tick = now_tick;
 
+              /* 【修改 1】：连接前，在屏幕第四行显示提示，化卡顿为合理交互 */
+              BSP_OLED_ShowString(0, 6, "NET CONNECTING..");
+              BSP_OLED_Refresh();
+
+              if (BSP_ESP8266_StartOneNET() == HAL_OK)
+              {
+                  g_state.wifi_ok  = 1U;
+                  g_state.cloud_ok = 1U;
+                  /* 【修改 2】：连接成功，提示在线 */
+                  BSP_OLED_ShowString(0, 6, "CLOUD ONLINE    "); 
+              }
+              else
+              {
+                  g_state.wifi_ok  = 0U;
+                  g_state.cloud_ok = 0U;
+                  /* 【修改 3】：连接失败，提示离线，并延长重试时间到20秒，留出时间演示本地功能 */
+                  BSP_OLED_ShowString(0, 6, "CLOUD FAILED    "); 
+                  g_onenet_retry_tick = now_tick + 10000U; // 额外增加10秒惩罚等待，避免频繁卡顿
+              }
+              BSP_OLED_Refresh();
+              
+              /* 防止连网太久导致后续的传感器刷新瞬间乱套，重置一下时间戳 */
+              g_display_tick = HAL_GetTick();
+              g_sensor_tick = HAL_GetTick();
+          }
+      }
+      else
+      {
+          /* 已连接时，定时上报属性... (保留您原来的代码不变) */
+          if ((now_tick - g_cloud_tick) >= CLOUD_UPLOAD_PERIOD_MS)
+          // ... 后面不动 ...
+          {
+              g_cloud_tick = now_tick;
+
+              APP_Cloud_Upload(&g_sensor, &g_state);
+
+              if (BSP_ESP8266_PublishPropertyJson(APP_Cloud_GetLastPacket()) == HAL_OK)
+              {
+                  g_state.cloud_ok = 1U;
+              }
+              else
+              {
+                  g_state.cloud_ok = 0U;
+              }
+          }
+      }
       HAL_Delay(10);
   }
-
+}
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
-}
+
 
 /**
   * @brief System Clock Configuration
@@ -512,3 +698,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+

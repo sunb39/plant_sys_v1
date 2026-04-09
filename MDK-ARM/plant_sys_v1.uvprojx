@@ -621,16 +621,6 @@
               <FilePath>..\Bsp\bsp_bh1750.h</FilePath>
             </File>
             <File>
-              <FileName>bsp_delay.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Bsp\bsp_delay.c</FilePath>
-            </File>
-            <File>
-              <FileName>bsp_delay.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Bsp\bsp_delay.h</FilePath>
-            </File>
-            <File>
               <FileName>bsp_dht11.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Bsp\bsp_dht11.c</FilePath>

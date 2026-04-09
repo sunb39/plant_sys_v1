@@ -204,7 +204,14 @@ void SysTick_Handler(void)
 void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
-
+	/* 【新增修复代码】：防止 ESP8266 数据大爆发导致 UART 溢出(ORE)从而死机 */
+  if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_ORE) != RESET)
+  {
+      __HAL_UART_CLEAR_OREFLAG(&huart1); // 强制清除溢出错误标志位
+      /* 如果您的接收使用单字节中断，建议在这里重新开启一次接收以防断流：
+       * HAL_UART_Receive_IT(&huart1, &rx_buffer, 1); 
+       */
+  }
   /* USER CODE END USART1_IRQn 0 */
   HAL_UART_IRQHandler(&huart1);
   /* USER CODE BEGIN USART1_IRQn 1 */

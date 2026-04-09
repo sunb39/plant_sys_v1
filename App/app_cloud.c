@@ -1,38 +1,138 @@
 #include "app_cloud.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* g_cloud_tx_buf（云端发送缓冲区）
- * 作用：保存最近一次打包好的上行数据字符串
+ * 作用：保存最近一次打包好的 OneNET 物模型属性上报 JSON
  */
 static char g_cloud_tx_buf[CLOUD_TX_BUF_SIZE];
 
-/* APP_Cloud_Init（云端通信初始化）
- * 说明：当前阶段不做真实ESP8266联网，只完成软件框架初始化。
+/* 这里把土壤 ADC 原始值映射成百分比
+ * 说明：
+ * 1. 当前 soil_moisture 在您的工程里存的是 ADC 原始值
+ * 2. 数值越大越干，越小越湿
+ * 3. 这里先给一组经验值，后面可再按实测微调
  */
+#define SOIL_RAW_WET   (1800.0f)   /* 很湿时的 ADC 值 */
+#define SOIL_RAW_DRY   (4200.0f)   /* 很干时的 ADC 值 */
+
+/* APP_Cloud_FormatX10（把 x10 定点数格式化成字符串）
+ * 例如：144 -> "14.4"
+ */
+static void APP_Cloud_FormatX10(long value_x10, char *out, size_t out_size)
+{
+    long abs_val;
+
+    if ((out == 0) || (out_size == 0U))
+    {
+        return;
+    }
+
+    abs_val = (value_x10 >= 0) ? value_x10 : (-value_x10);
+
+    if (value_x10 < 0)
+    {
+        snprintf(out, out_size, "-%ld.%01ld", abs_val / 10L, abs_val % 10L);
+    }
+    else
+    {
+        snprintf(out, out_size, "%ld.%01ld", abs_val / 10L, abs_val % 10L);
+    }
+}
+
+/* APP_Cloud_FormatX100（把 x100 定点数格式化成字符串）
+ * 例如：392 -> "3.92"
+ */
+static void APP_Cloud_FormatX100(long value_x100, char *out, size_t out_size)
+{
+    long abs_val;
+
+    if ((out == 0) || (out_size == 0U))
+    {
+        return;
+    }
+
+    abs_val = (value_x100 >= 0) ? value_x100 : (-value_x100);
+
+    if (value_x100 < 0)
+    {
+        snprintf(out, out_size, "-%ld.%02ld", abs_val / 100L, abs_val % 100L);
+    }
+    else
+    {
+        snprintf(out, out_size, "%ld.%02ld", abs_val / 100L, abs_val % 100L);
+    }
+}
+
+/* APP_Cloud_SoilRawToPercent（原始土壤 ADC 转百分比）
+ * 说明：
+ * 1. 干 -> 0%
+ * 2. 湿 -> 100%
+ */
+static float APP_Cloud_SoilRawToPercent(float raw)
+{
+    float pct;
+
+    if (raw <= SOIL_RAW_WET)
+    {
+        return 100.0f;
+    }
+
+    if (raw >= SOIL_RAW_DRY)
+    {
+        return 0.0f;
+    }
+
+    pct = (SOIL_RAW_DRY - raw) * 100.0f / (SOIL_RAW_DRY - SOIL_RAW_WET);
+
+    if (pct < 0.0f)
+    {
+        pct = 0.0f;
+    }
+
+    if (pct > 100.0f)
+    {
+        pct = 100.0f;
+    }
+
+    return pct;
+}
+
+/* APP_Cloud_Init（云端通信初始化） */
 void APP_Cloud_Init(SystemState_t *state)
 {
     if (state != 0)
     {
-        state->wifi_ok  = 0;
-        state->cloud_ok = 0;
+        state->wifi_ok  = 0U;
+        state->cloud_ok = 0U;
     }
 
     memset(g_cloud_tx_buf, 0, sizeof(g_cloud_tx_buf));
 }
 
-/* APP_Cloud_Upload（云端数据打包）
+/* APP_Cloud_Upload（组织 OneNET 属性上报 JSON）
  * 说明：
- * 1. 当前阶段先完成“数据打包”，后续再接入真实串口发送；
- * 2. 这里用整数放大方式，避免直接使用浮点格式化带来的库配置问题。
+ * 1. 按您当前平台功能点标识符输出：
+ *    AirTemp / AirHumi / LightLux / SoilMoisture / PHValue
+ *    PumpState / LightState / BeepState
+ * 2. 这里直接输出 OneJSON 风格，后续 ESP8266 只负责发 topic
  */
 void APP_Cloud_Upload(const SensorData_t *data, const SystemState_t *state)
 {
     long air_temp_x10;
     long air_humi_x10;
     long light_lux_x10;
-    long soil_x10;
+    long soil_pct_x10;
     long ph_x100;
+
+    char air_temp_str[24];
+    char air_humi_str[24];
+    char light_lux_str[24];
+    char soil_str[24];
+    char ph_str[24];
+
+    float soil_percent;
 
     if ((data == 0) || (state == 0))
     {
@@ -42,49 +142,55 @@ void APP_Cloud_Upload(const SensorData_t *data, const SystemState_t *state)
     air_temp_x10  = (long)(data->air_temp * 10.0f);
     air_humi_x10  = (long)(data->air_humi * 10.0f);
     light_lux_x10 = (long)(data->light_lux * 10.0f);
-    soil_x10      = (long)(data->soil_moisture * 10.0f);
+
+    soil_percent  = APP_Cloud_SoilRawToPercent(data->soil_moisture);
+    soil_pct_x10  = (long)(soil_percent * 10.0f);
+
     ph_x100       = (long)(data->ph_value * 100.0f);
 
-    /* 打包为类 JSON 格式字符串
-     * 答辩可说：当前先完成协议字段组织，后续只需把该字符串通过串口发给 ESP8266 即可。
-     */
+    APP_Cloud_FormatX10(air_temp_x10,  air_temp_str,  sizeof(air_temp_str));
+    APP_Cloud_FormatX10(air_humi_x10,  air_humi_str,  sizeof(air_humi_str));
+    APP_Cloud_FormatX10(light_lux_x10, light_lux_str, sizeof(light_lux_str));
+    APP_Cloud_FormatX10(soil_pct_x10,  soil_str,      sizeof(soil_str));
+    APP_Cloud_FormatX100(ph_x100,      ph_str,        sizeof(ph_str));
+
     snprintf(g_cloud_tx_buf,
              sizeof(g_cloud_tx_buf),
-             "{\"air_temp_x10\":%ld,"
-             "\"air_humi_x10\":%ld,"
-             "\"light_lux_x10\":%ld,"
-             "\"soil_moisture_x10\":%ld,"
-             "\"ph_value_x100\":%ld,"
-             "\"pump_on\":%u,"
-             "\"light_on\":%u,"
-             "\"beep_on\":%u}",
-             air_temp_x10,
-             air_humi_x10,
-             light_lux_x10,
-             soil_x10,
-             ph_x100,
+             "{"
+             "\"id\":\"123\","
+             "\"version\":\"1.0\","
+             "\"params\":{"
+                 "\"AirTemp\":{\"value\":%s},"
+                 "\"AirHumi\":{\"value\":%s},"
+                 "\"LightLux\":{\"value\":%s},"
+                 "\"SoilMoisture\":{\"value\":%s},"
+                 "\"PHValue\":{\"value\":%s},"
+                 "\"PumpState\":{\"value\":%u},"
+                 "\"LightState\":{\"value\":%u},"
+                 "\"BeepState\":{\"value\":%u}"
+             "}"
+             "}",
+             air_temp_str,
+             air_humi_str,
+             light_lux_str,
+             soil_str,
+             ph_str,
              state->pump_on,
              state->light_on,
              state->beep_on);
 }
 
-/* APP_Cloud_Parse（云端报文解析）
- * 说明：当前阶段先预留接口，后续接入串口接收缓冲区后再做解析。
+/* APP_Cloud_Parse（预留）
+ * 说明：本版服务解析放在 bsp_esp8266.c 中做
  */
 void APP_Cloud_Parse(void)
 {
-    /* 以后可在这里解析类似：
-     * "PUMP=1"
-     * "LIGHT=0"
-     * "AUTO_WATER=1"
-     * 等控制命令
-     */
+    /* 预留 */
 }
 
-/* APP_Cloud_GetLastPacket（获取最近一次待上传报文）
- * 说明：便于后续串口调试、界面显示或日志打印。
- */
 const char *APP_Cloud_GetLastPacket(void)
 {
     return g_cloud_tx_buf;
+
 }
+
