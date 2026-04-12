@@ -4,7 +4,7 @@
 #include "plant_types.h"
 #include <stdint.h>
 
-#define CLOUD_TX_BUF_SIZE    (512U)   /* CLOUD_TX_BUF_SIZE（云端发送缓存区大小） */
+#define CLOUD_TX_BUF_SIZE    (1024U)   /* CLOUD_TX_BUF_SIZE（云端发送缓存区大小） */
 
 /* APP_Cloud_Init（云端通信初始化）
  * 作用：初始化通信状态和缓存区

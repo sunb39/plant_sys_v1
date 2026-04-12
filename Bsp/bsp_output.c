@@ -155,3 +155,5 @@ else
     HAL_GPIO_WritePin(BEEP_CTRL_GPIO_Port, BEEP_CTRL_Pin, GPIO_PIN_SET);
 }
 }
+
+

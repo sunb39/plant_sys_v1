@@ -13,7 +13,7 @@
 /* 软件调度周期，单位：ms */
 #define SENSOR_PERIOD_MS        (500U)   /* 传感器更新周期 */
 #define DISPLAY_PERIOD_MS       (1000U)   /* 显示刷新周期 */
-#define CLOUD_PERIOD_MS         (1000U)  /* 云端上传周期 */
+#define CLOUD_PERIOD_MS         (30000U)  /* 云端上传周期 */
 
 /* DHT11 单独采样周期，建议 >= 1000ms，联调阶段用 2000ms 更稳 */
 #define DHT11_PERIOD_MS         (2000U)
